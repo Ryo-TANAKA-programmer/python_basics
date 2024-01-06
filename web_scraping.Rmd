@@ -1,0 +1,241 @@
+---
+title: 'HW 06: APIs and Web Scraping'
+author: "Ryo Tanaka"
+date: "`r Sys.Date()`"
+output:
+  html_document: default
+  word_document: default
+urlcolor: blue
+params:
+  solutions: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo       = params$solutions, 
+                      eval       = params$solutions,
+                      fig.align  = "center",
+                      fig.height = 3, 
+                      fig.width  = 5)
+```
+
+© 2023 David Gerard, not to be posted online.
+
+# Instructions
+
+- Write your solutions in this starter file. You should modify the 
+  "author" field in the YAML header.
+- Only commit R Markdown and HTML files (no PDF files). Make sure
+  you have knitted to HTML for your final submission.
+- **Make sure to commit each time you answer a question.**
+- Only include the necessary code, not any extraneous code, to answer the 
+  questions.
+- Learning objectives:
+    - Obtain data from an API.
+    - Scrape data from the web.
+
+# Open Brewery Database
+
+Consider the Open Brewery Database API: <https://www.openbrewerydb.org/>
+
+Only use `{httr2}`, not `{httr}`.
+
+Loading libraries
+```{r}
+library(tidyverse)
+library(httr2)
+library(repurrrsive)
+library(maps)
+library(rvest)
+#install.packages("maps")
+```
+
+
+1. (1 pt) Get the list of all micro breweries in Ohio (163 of them) where we have longitude and latitude information (124 of them). These should be the microbreweries you obtained:
+
+```{r}
+# base url
+baseurl_brewery <- "https://api.openbrewerydb.org/v1/breweries"
+```
+
+```{r}
+request(base_url = baseurl_brewery) %>% 
+  req_url_query(by_state = "Ohio",
+                by_type = "micro",
+                per_page = 200) %>% 
+  req_perform() -> brewery_state_out
+
+
+brewery_df <- tibble(brew = resp_body_json(brewery_state_out))
+brewery_df <- unnest_wider(brewery_df, brew)
+brewery_df_1 <- brewery_df %>% 
+  filter(!is.na(latitude) | !is.na(longitude))
+brewery_df_1$name
+```
+
+
+2. (1 pt) Clean up the data from part 1 to get the following data frame:
+
+
+```{r}
+names(brewery_df_1)
+brewery_df_1 <- brewery_df_1[-c(3,5,6,10,15)]
+brewery_df_1
+```
+
+3. (1 pt) Edit the following ggplot code to obtain the following plot:
+
+```{r}
+brewery_df_1 <- brewery_df_1 %>% 
+  mutate(longitude = as.numeric(longitude),
+         latitude = as.numeric(latitude))
+countymap <- map_data("county")
+countymap %>% 
+  filter(region == "ohio") %>% 
+  ggplot() + 
+  geom_polygon(aes(x = long, 
+                   y = lat, 
+                   group = subregion),
+               fill = "white",
+               color = "black") +
+  geom_point(data = brewery_df_1,
+             aes(x = longitude,
+                 y = latitude)) +
+  theme_void()
+```
+
+# English women artists
+
+Consider the copied Wikipedia page on English women artists: 
+<https://data-science-master.github.io/lectures/data/engart.html>
+
+We'll use the copied version on GitHub rather than the original version
+to make sure solutions are consistent. But the original version can be found
+here (but don't use it): <https://en.wikipedia.org/wiki/List_of_English_women_artists>
+
+Use rvest to answer the following questions.
+
+1. (1 pt) Download the html file and save the output to a variable.
+
+```{r}
+# downloading the html page
+eng_women_html <- read_html("https://data-science-master.github.io/lectures/data/engart.html")
+```
+
+
+2. (1 pt) Use SelectorGadget to extract each woman, years of life, and artistic medium. For example, my selections looked like this:
+
+```{r}
+eng_women_df <- html_elements(x = eng_women_html,
+              css = "ul:nth-child(49) li , ul:nth-child(47) li, ul:nth-child(45) li, ul:nth-child(43) li, ul:nth-child(41) li, ul:nth-child(39) li, ul:nth-child(37) li, ul:nth-child(35) li, ul:nth-child(33) li, ul:nth-child(31) li, ul:nth-child(29) li, ul:nth-child(27) li, ul:nth-child(25) li, ul:nth-child(23) li, ul:nth-child(21) li, ul:nth-child(19) li, ul:nth-child(17) li, ul:nth-child(15) li, ul:nth-child(13) li, ul:nth-child(11) li, ul:nth-child(9) li, ul:nth-child(7) li, ul:nth-child(5) li") %>% 
+  html_text()
+```
+
+3. (2 pts) Clean the data. 
+
+    Hints:
+
+    1. Not all year ranges are of the form (Birth-Death). You should place
+       NA's in the appropriate locations. No need to extract third-party 
+       datasets to obtain the true values.
+    2. Be careful of parsing numbers like `"c.1888"`.
+    3. Parentheses are used more than just to delimit years.
+    4. Painters, sculptors, illustrators, and printmakers are the most common
+       types of artists, so I included indicators for those mediums. Note
+       that not all printmakers are called "printmakers".
+
+    Your final data frame should look like this:
+    
+    
+```{r}
+eng_women_df <- tibble(data = eng_women_df)
+eng_original_df <- eng_women_df
+
+eng_women_df <- 
+  eng_women_df %>% 
+  separate(
+    col = "data", 
+    into = c("name", "other"),
+    sep = "\\(", 
+    extra = "merge")
+
+eng_women_df <- 
+  eng_women_df %>% 
+  separate(
+    col = "other", 
+    into = c("year", "mediums"),
+    sep = "\\),", 
+    extra = "merge")
+
+eng_women_df <- eng_women_df %>% 
+  mutate(year = str_remove_all(year, "[^0-9]")) %>% 
+  separate(col = year, 
+           into = c("birth", "death"), 
+           sep = 4)
+
+eng_women_df$death[eng_women_df$death == ''] <- NA
+
+eng_women_df$mediums <- str_replace_all(eng_women_df$mediums, 
+                                        ",", 
+                                        " ")
+eng_women_df$mediums <- str_replace_all(eng_women_df$mediums, 
+                                        "  ", 
+                                        " ")
+eng_women_df$name <- str_replace_all(eng_women_df$name, 
+                                        "\n",
+                                        "")
+
+eng_women_df <- eng_women_df %>% 
+  mutate(painter = str_detect(eng_women_df$mediums, 
+                              "painter|paint"),
+         sculptor = str_detect(eng_women_df$mediums, 
+                              "sculptor"),
+         illustrator = str_detect(eng_women_df$mediums, 
+                              "illustrator"),
+         printmaker = str_detect(eng_women_df$mediums, 
+                              " printmaker|prıntmaker|printer"))
+
+error_women <- !eng_women_df$painter & str_detect(eng_original_df$data, 
+                                                     pattern = "paint")
+eng_women_df$name[error_women]
+eng_women_df$name[is.na(error_women)]
+eng_women_df$painter[eng_women_df$name == "Maria Pixell "] <- TRUE
+eng_women_df$painter[eng_women_df$name == "Hilary Simon, silk painter"] <- TRUE
+```
+
+4. (1 pt) Tabulate the number of painters, sculptors, illustrators, and printmakers. You should get these numbers:
+
+```{r}
+tibble("painters_n" = sum(eng_women_df$painter,na.rm = TRUE),
+       "sculptor_n" = sum(eng_women_df$sculptor,na.rm = TRUE),
+       "illustrator_n" = sum(eng_women_df$illustrator, na.rm = TRUE),
+       "printmaker_n" = sum(eng_women_df$printmaker, na.rm = TRUE))
+```
+
+5. (1 pt) Plot the lifespans of printmakers. Your plot should look like this:
+
+```{r}
+eng_women_viz <- eng_women_df %>% 
+  select(name,birth,death,painter,printmaker) %>% 
+  filter(printmaker == TRUE) %>% 
+  mutate(birth = as.numeric(birth),
+         death = as.numeric(death))
+
+eng_women_viz <- eng_women_viz[order(eng_women_viz$birth), 
+                               decreasing = TRUE]
+eng_women_viz[14,3] <- Inf
+eng_women_viz[15,3] <- Inf
+
+  ggplot(data = eng_women_viz,
+         aes(y = name)) +
+    labs(x = "Birth/Death",
+         y = "Artist") +
+    theme_bw() +
+    geom_segment(aes(x = birth,
+                     y = reorder(name,
+                                 birth,
+                                 decreasing = TRUE),
+                     xend = death,
+                     yend = name,
+                     color = painter)) +
+    scale_colour_manual(values = c("navy","orange"))
+```
